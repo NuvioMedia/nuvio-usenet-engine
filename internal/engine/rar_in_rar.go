@@ -22,7 +22,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/rarname"
+	"github.com/haaihond/nuvio-usenet-engine/internal/rarname"
 )
 
 // rarListSpans bounds the stretches of a set listed at once; each holds at

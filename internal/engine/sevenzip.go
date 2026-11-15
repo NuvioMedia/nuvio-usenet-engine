@@ -25,7 +25,7 @@ import (
 	"sync"
 	"unicode/utf16"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/rarname"
+	"github.com/haaihond/nuvio-usenet-engine/internal/rarname"
 	"github.com/javi11/sevenzip"
 )
 

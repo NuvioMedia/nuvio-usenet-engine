@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/testsupport/nntpserver"
+	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/nntpserver"
 )
 
 // Lowers what parseNZB holds in memory, so a small fixture stands for a document past the real bounds.

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/testsupport/nntpserver"
+	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/nntpserver"
 )
 
 type startupNetwork struct {

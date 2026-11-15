@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/testsupport/nntpserver"
+	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/nntpserver"
 	"github.com/javi11/nntppool/v4"
 	"github.com/javi11/sevenzip"
 )

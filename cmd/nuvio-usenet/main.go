@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/NuvioMedia/NuvioTV/native/usenet/internal/engine"
+	"github.com/haaihond/nuvio-usenet-engine/internal/engine"
 )
 
 // Bootstrap and ownership travel over stdin, never argv, environment or disk.

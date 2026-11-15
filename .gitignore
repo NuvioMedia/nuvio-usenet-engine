@@ -3,3 +3,6 @@
 /prebuilt/*/*.so
 /prebuilt/*/*.part
 *.exe
+
+__pycache__/
+*.pyc
