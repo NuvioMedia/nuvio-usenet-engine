@@ -23,3 +23,19 @@ MIT license. `third_party` retains upstream source notices. `licenses` is an APK
 assets source directory; Android packages these notices with the engine.
 
 NuvioTV base checkout: `23d1fe478e380860dae3eb41c8770533361a0cc5`.
+
+## Repository extraction
+
+This repository was extracted from `native/usenet` in
+[haaihond/NuvioTV](https://github.com/haaihond/NuvioTV), branch `full-nntp`,
+at commit `f222d044f69967764804236a65c6ec7d877b377d`. The source snapshot
+was verified byte-for-byte before the standalone repository adjustments.
+
+The filtered history retains engine changes, the project license, the native
+asset download tests, and the engine CI/publishing workflows. Original authors
+and commit messages are retained; commit IDs change and original commit
+signatures cannot survive the extraction. Original pull request discussions
+remain in NuvioTV. The NuvioTV Android application is not included.
+
+The inherited project license is included in `LICENSE` (GNU GPL version 3).
+Upstream components retain their own licenses and notices as listed above.
