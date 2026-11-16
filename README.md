@@ -2,6 +2,9 @@
 
 Cross-platform Usenet streaming engine for Nuvio (under active development).
 
+The canonical source and Android release repository is
+[NuvioMedia/nuvio-usenet-engine](https://github.com/NuvioMedia/nuvio-usenet-engine).
+
 The engine turns an NZB and NNTP provider configuration into seekable HTTP media
 streams. It includes pipelined NNTP connections, SIMD yEnc decoding, lazy archive
 handling, file and episode selection, subtitles, and bounded in-memory article
@@ -58,7 +61,7 @@ To rebuild all four ABIs, install the pinned Go toolchain, Android NDK
 python3 scripts/build_android.py \
   --ndk "$ANDROID_HOME/ndk/29.0.14206865" \
   --cmake "$ANDROID_HOME/cmake/3.22.1/bin/cmake" \
-  --release-repository haaihond/nuvio-usenet-engine
+  --release-repository NuvioMedia/nuvio-usenet-engine
 python3 scripts/check_prebuilts.py
 ```
 
@@ -83,17 +86,28 @@ JNI.
 
 ## Using the engine in NuvioTV
 
-Pin this repository at `native/usenet` in NuvioTV, for example as a Git submodule.
-Initialize submodules in developer and CI checkouts. The included
-`android.gradle.kts` is a NuvioTV adapter that expects that location; the normal
-build downloads verified release assets, while `-PbuildUsenetFromSource=true`
-builds locally. Package `licenses/` as app assets and retain the executable
-filename `libnuvio_usenet.so`.
+NuvioTV's `usenet` branch keeps its Android adapter and pinned dependency metadata
+in `native/usenet`. Normal app builds download the exact release from this
+repository and verify all four ABI checksums. To update the app dependency:
 
-This extraction does not change NuvioTV's dependency automatically. Its launcher
-and the engine continue to use protocol version 1. When transferring the engine
-repository to an organization, update the Go module/import paths and release
-repository together, regenerate the manifest and publish matching assets.
+1. Build, commit and publish the engine source and manifest in this repository.
+2. Verify the published assets with `scripts/fetch_prebuilts.py` and
+   `scripts/check_prebuilts.py` from a checkout without cached binaries.
+3. Copy `prebuilt/manifest.json` into NuvioTV's `native/usenet/prebuilt/` and set
+   `native/usenet/engine-source.json` to this repository and the published commit.
+4. Refresh `native/usenet/licenses/` when notices change, then run the app's
+   prebuilt verification before committing its dependency update.
+
+For local engine development, clone this repository separately and build NuvioTV
+with `-PbuildUsenetFromSource=true` and
+`-PusenetEngineSourceDir=/absolute/path/to/nuvio-usenet-engine`. The included
+`android.gradle.kts` also supports integrations that place the full engine source
+at `native/usenet`. Package `licenses/` as app assets and retain the executable
+filename `libnuvio_usenet.so`. The launcher and engine use protocol version 1.
+
+GitHub Release assets belong to the repository that publishes them; copying the
+source alone does not copy its binaries. Always publish and verify an engine
+release before moving an app's dependency pin to it.
 
 ## History and license
 
