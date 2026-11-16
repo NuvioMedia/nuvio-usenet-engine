@@ -40,8 +40,10 @@ def main():
         if arch == "arm":
             env["GOARM"] = "7"
         output = build / "libnuvio_usenet.so"
+        # CGO action IDs include toolchain paths; omit the Go build ID so
+        # identical code has identical release checksums across build hosts.
         subprocess.run([args.go, "build", "-trimpath", "-buildvcs=false", "-buildmode=pie",
-                        "-ldflags=-s -w -extldflags=-Wl,-z,max-page-size=16384", "-o", str(output), "./cmd/nuvio-usenet"],
+                        "-ldflags=-s -w -buildid= -extldflags=-Wl,-z,max-page-size=16384", "-o", str(output), "./cmd/nuvio-usenet"],
                        cwd=ROOT, env=env, check=True)
         outputs.append((abi, output))
     if before != source_digest():
