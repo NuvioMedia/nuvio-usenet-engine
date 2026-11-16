@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/nntpserver"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/testsupport/nntpserver"
 	"github.com/javi11/nntppool/v4"
 )
 

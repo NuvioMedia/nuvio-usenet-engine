@@ -1,4 +1,4 @@
-module github.com/haaihond/nuvio-usenet-engine
+module github.com/NuvioMedia/nuvio-usenet-engine
 
 replace github.com/mnightingale/rapidyenc => ./third_party/rapidyenc
 

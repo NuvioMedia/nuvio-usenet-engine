@@ -17,7 +17,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/rarname"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/rarname"
 )
 
 type nestedChild struct {

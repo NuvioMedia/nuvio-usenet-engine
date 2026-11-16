@@ -42,7 +42,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/segments"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/testsupport/segments"
 	"github.com/mnightingale/rapidyenc"
 )
 

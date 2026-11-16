@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/rarname"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/rarname"
 )
 
 // minSniffedEntry is the smallest archive entry of unknown type whose first

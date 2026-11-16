@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/testsupport/nntpserver"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/testsupport/nntpserver"
 )
 
 func openSessionStatus(t *testing.T, xml string, articles map[string][]byte) (int, string) {

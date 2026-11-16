@@ -20,7 +20,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/haaihond/nuvio-usenet-engine/internal/rarname"
+	"github.com/NuvioMedia/nuvio-usenet-engine/internal/rarname"
 	"github.com/javi11/nntppool/v4"
 )
 
