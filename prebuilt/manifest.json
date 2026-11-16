@@ -1,13 +1,13 @@
 {
   "version": 1,
-  "sourceSha256": "4d759cf88f9d4413cbb65c4b262c6dcf783859338c66dc60ac4dc6b4e7e647d3",
+  "sourceSha256": "1623c1daac41116be972abd6369ef1c2c7709b926badb4606f1d6152148e4679",
   "binarySha256": {
-    "arm64-v8a": "f3141ec79e8e461a6ac142c04018b2cbed1e4c987bf9680d892621aaa540cc75",
-    "armeabi-v7a": "470508cbf95bbb536f7e4d53106203e9bde71e9246470db10d97ceaa401ef29a",
-    "x86_64": "2f15b14f5e1bbf1fbee831c429b3028e8285afff4fccef38b689d1b51afa3436",
-    "x86": "e24030d7d3f51e9185ce8cf0fb62350f14fa92efc8d79dec53c2821314ba64d0"
+    "arm64-v8a": "2b08b678f04f456ca0a58ffbeffd5f9c01deef467e21b5d46fac06d5f3253699",
+    "armeabi-v7a": "0072a762986650b2bd4ba7e84a6cfd0b196e173fb517347d607bdd67d3861796",
+    "x86_64": "242b4cdeb17097af6ab4ca3540a5c15b555c7371f5aaed56bd344b2b48a62ff0",
+    "x86": "60fc4e69159bc157327060536006ffb537d33e70bc1b13212b06ed400bea71f3"
   },
-  "downloadBaseUrl": "https://github.com/haaihond/nuvio-usenet-engine/releases/download/usenet-native-4d759cf88f9d4413",
+  "downloadBaseUrl": "https://github.com/haaihond/nuvio-usenet-engine/releases/download/usenet-native-1623c1daac41116b",
   "toolchain": {
     "go": "go version go1.27.2 linux/amd64",
     "ndk": "29.0.14206865"
