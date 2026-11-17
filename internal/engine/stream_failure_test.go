@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/NuvioMedia/nuvio-usenet-engine/internal/testsupport/nntpserver"
 	"github.com/javi11/nntppool/v4"
@@ -114,6 +115,62 @@ func TestSeekBesideMissingArticles(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSeekRetriesAnUnresolvedMissingRun(t *testing.T) {
+	const size = 512
+	sizes := make([]int, 160)
+	for i := range sizes {
+		sizes[i] = size
+	}
+	want := payload(len(sizes) * size)
+	missing := make([]int, 100)
+	for i := range missing {
+		missing[i] = i + 1
+	}
+	copy(want[size:], bytes.Repeat([]byte{214}, len(missing)*size))
+	sess, provider, server, _ := brokenStreamWithPayload(t, want, sizes, missing, Config{})
+	resp, _, err := requestRange(t, server, "bytes=0-15")
+	if err != nil || resp.StatusCode != 206 {
+		t.Fatalf("initial range: status=%d err=%v", resp.StatusCode, err)
+	}
+	start := (len(missing) + 1) * size
+	rng := fmt.Sprintf("bytes=%d-%d", start, start+5)
+	before := provider.Counters().Bodies
+	resp, _, err = requestRange(t, server, rng)
+	if err != nil || resp.StatusCode != 502 || sess.failure.get() != "" {
+		t.Fatalf("unresolved range: status=%d err=%v failure=%q", resp.StatusCode, err, sess.failure.get())
+	}
+	if requests := provider.Counters().Bodies - before; requests > maxMissingLayoutProbes+1 {
+		t.Fatalf("first range made %d BODY requests", requests)
+	}
+	resp, b, err := requestRange(t, server, rng)
+	if err != nil || resp.StatusCode != 206 || !bytes.Equal(b, want[start:start+6]) {
+		t.Fatalf("retry: status=%d bytes=%x err=%v", resp.StatusCode, b, err)
+	}
+}
+
+func TestSeekPastMissingArticleWithStaleHint(t *testing.T) {
+	const size = 4096
+	sess, _, server, want := brokenStreamFixture(t, []int{size, size, size, size, size}, []int{1, 2}, Config{})
+	resp, _, err := requestRange(t, server, "bytes=0-15")
+	if err != nil || resp.StatusCode != 206 {
+		t.Fatalf("initial range: status=%d err=%v", resp.StatusCode, err)
+	}
+	f := sess.content.direct
+	// A sparse cached anchor puts the seek in article 1. Article 3 can
+	// establish the real range without ever verifying the intervening articles.
+	f.mu.Lock()
+	f.segments[1].known, f.segments[1].hint = true, true
+	f.segments[1].begin, f.segments[1].end = size, 3*size+100
+	f.known = append(f.known, 1)
+	f.mu.Unlock()
+	start := 3*size + 5
+	server.Client().Timeout = 5 * time.Second
+	resp, b, err := requestRange(t, server, fmt.Sprintf("bytes=%d-%d", start, start+5))
+	if err != nil || resp.StatusCode != 206 || !bytes.Equal(b, want[start:start+6]) {
+		t.Fatalf("range past stale hint: status=%d bytes=%x err=%v", resp.StatusCode, b, err)
 	}
 }
 

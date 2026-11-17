@@ -78,69 +78,129 @@ func (p *holePolicy) accept(f *File, span holeSpan) error {
 	return nil
 }
 
-func (r *FileReader) holeAt(i int) (holeSpan, error) {
-	p := r.f.store.holes
-	span := holeSpan{first: i, last: i}
-	// Segment zero carries container/volume headers and is never replaceable.
-	if i == 0 {
-		return span, nntppool.ErrArticleNotFound
+// A cold seek into a large missing run can take many BODY requests to locate.
+// Bound new probes per lookup. The store remembers confirmed misses, so a retry
+// can continue from them. An unresolved estimate is a temporary read error.
+const maxMissingLayoutProbes = 32
+
+func (r *FileReader) probeLayout(i int, probes *int) (segment, error) {
+	if err := r.ctx.Err(); err != nil {
+		return segment{}, err
 	}
-	learn := func(j int) (segment, error) {
-		a := r.get(j, false)
-		if a == nil {
-			return segment{}, context.Canceled
-		}
-		m, err := a.metadata(r.ctx)
-		if err != nil {
-			return segment{}, err
-		}
-		if err := r.f.learn(j, m); err != nil {
-			return segment{}, fmt.Errorf("%w: %v", errInvalidArticle, err)
-		}
-		r.f.mu.RLock()
-		defer r.f.mu.RUnlock()
-		return r.f.segments[j], nil
+	f := r.f
+	f.mu.RLock()
+	seg := f.segments[i]
+	f.mu.RUnlock()
+	f.store.mu.Lock()
+	missing := f.store.missing[seg.id]
+	f.store.mu.Unlock()
+	if missing {
+		return segment{}, nntppool.ErrArticleNotFound
 	}
-	for j := i - 1; ; j-- {
-		seg, err := learn(j)
-		if err == nil {
-			span.begin = seg.end
-			break
+	if seg.known && !seg.hint {
+		return seg, nil // Already verified from yEnc in this session.
+	}
+	if *probes >= maxMissingLayoutProbes {
+		return segment{}, errors.New("could not locate byte range among missing articles")
+	}
+	*probes++
+	a := f.store.acquire(seg.id, false)
+	if a == nil {
+		return segment{}, context.Canceled
+	}
+	defer f.store.releaseHeader(a)
+	m, err := a.metadata(r.ctx)
+	if err != nil {
+		return segment{}, err
+	}
+	if err := f.learn(i, m); err != nil {
+		return segment{}, fmt.Errorf("%w: %v", errInvalidArticle, err)
+	}
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.segments[i], nil
+}
+
+// missingSpanAt resolves a missing estimate against decoded offsets. As soon
+// as one neighbour puts off outside the run, its boundary suffices to resume
+// the seek. Only a read inside the run is subject to the hole-filling policy.
+func (r *FileReader) missingSpanAt(i int, off int64) (holeSpan, error) {
+	f := r.f
+	policy := f.store.holes
+	fill := r.fill && policy != nil
+	f.mu.RLock()
+	last := len(f.segments) - 1
+	seg := f.segments[i]
+	f.mu.RUnlock()
+	if !fill && seg.known && !seg.hint && off >= seg.begin && off < seg.end {
+		return holeSpan{}, nntppool.ErrArticleNotFound
+	}
+
+	r.Close() // Release the old read-ahead window before acquiring probe articles.
+	span := holeSpan{first: i, last: i, begin: -1, end: -1}
+	probes := 0
+	leftNext := true
+	for {
+		if span.first == 0 {
+			span.begin = 0
 		}
-		if !errors.Is(err, nntppool.ErrArticleNotFound) {
+		if span.last == last {
+			if span.first == 0 {
+				return span, nntppool.ErrArticleNotFound // Every article is missing.
+			}
+			f.mu.RLock()
+			if f.exact && !f.hintSize {
+				span.end = f.size
+			}
+			f.mu.RUnlock()
+		}
+		if off < span.begin || (span.end >= 0 && off >= span.end) {
+			return span, nil // Resume the seek on the far side of this boundary.
+		}
+		n := int64(span.last - span.first + 1)
+		bracketed := span.begin >= 0 && span.end >= 0
+		// Each missing article occupies at least one decoded byte. An offset
+		// at a verified edge can therefore fail promptly even for a long run.
+		atEdge := (span.begin >= 0 && off >= span.begin && off-span.begin < n) ||
+			(span.end >= 0 && off < span.end && span.end-off <= n)
+		if bracketed || atEdge {
+			if !fill || span.first == 0 {
+				return span, nntppool.ErrArticleNotFound
+			}
+			if n > int64(policy.maxRun) {
+				return span, errHoleLimit
+			}
+			if bracketed {
+				if span.end <= span.begin || span.end-span.begin > n*maxArticleBytes {
+					return span, errInvalidArticle
+				}
+				return span, nil
+			}
+		}
+		// Alternate sides while both are unknown so a long missing run on
+		// one side cannot hide an immediately available article on the other.
+		left := span.begin < 0 && (leftNext || span.end >= 0 || span.last == last)
+		j := span.last + 1
+		if left {
+			j = span.first - 1
+		}
+		neighbour, err := r.probeLayout(j, &probes)
+		if err != nil && !errors.Is(err, nntppool.ErrArticleNotFound) {
 			return span, err
 		}
-		if j == 0 {
-			return span, err
+		if left {
+			if err == nil {
+				span.begin = neighbour.end
+			} else {
+				span.first = j
+			}
+		} else if err == nil {
+			span.end = neighbour.begin
+		} else {
+			span.last = j
 		}
-		span.first = j
-		if span.last-span.first+1 > p.maxRun {
-			return span, errHoleLimit
-		}
+		leftNext = !left
 	}
-	for j := i + 1; ; j++ {
-		if j == len(r.f.segments) {
-			// The preceding fresh article established the authoritative file size.
-			span.end = r.f.Size()
-			break
-		}
-		seg, err := learn(j)
-		if err == nil {
-			span.end = seg.begin
-			break
-		}
-		if !errors.Is(err, nntppool.ErrArticleNotFound) {
-			return span, err
-		}
-		span.last = j
-		if span.last-span.first+1 > p.maxRun {
-			return span, errHoleLimit
-		}
-	}
-	if span.end <= span.begin || span.end-span.begin > int64(span.last-span.first+1)*maxArticleBytes {
-		return span, errInvalidArticle
-	}
-	return span, nil
 }
 
 func fillHole(p []byte, off int64, span holeSpan) (int, error) {

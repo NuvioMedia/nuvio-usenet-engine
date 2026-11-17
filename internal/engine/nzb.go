@@ -645,9 +645,18 @@ func (f *File) locate(off int64, lo, hi int) int {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 	left, right := int64(0), f.size
-	j := sort.Search(len(f.known), func(j int) bool { return f.segments[f.known[j]].end > off })
-	if j < len(f.known) {
-		i := f.known[j]
+	// A correction has already ruled out indices outside [lo, hi]. A
+	// sparse restored hint there can still overlap a newly learned range.
+	known := f.known
+	if lo > 0 {
+		known = known[sort.SearchInts(known, lo):]
+	}
+	if hi < len(f.segments)-1 {
+		known = known[:sort.SearchInts(known, hi+1)]
+	}
+	j := sort.Search(len(known), func(j int) bool { return f.segments[known[j]].end > off })
+	if j < len(known) {
+		i := known[j]
 		s := f.segments[i]
 		if off >= s.begin {
 			return i
@@ -656,7 +665,7 @@ func (f *File) locate(off int64, lo, hi int) int {
 		right = s.begin
 	}
 	if j > 0 {
-		i := f.known[j-1]
+		i := known[j-1]
 		lo = max(lo, i+1)
 		left = f.segments[i].end
 	}
@@ -802,8 +811,8 @@ func (r *FileReader) ReadAt(p []byte, off int64) (int, error) {
 		}
 		m, err := a.metadata(r.ctx)
 		if err != nil {
-			if r.fill && r.f.store.holes != nil && errors.Is(err, nntppool.ErrArticleNotFound) {
-				span, holeErr := r.holeAt(i)
+			if errors.Is(err, nntppool.ErrArticleNotFound) {
+				span, holeErr := r.missingSpanAt(i, off)
 				if holeErr != nil {
 					return 0, holeErr
 				}
