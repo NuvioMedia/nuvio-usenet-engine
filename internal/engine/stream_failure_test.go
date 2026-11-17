@@ -174,6 +174,50 @@ func TestSeekPastMissingArticleWithStaleHint(t *testing.T) {
 	}
 }
 
+func TestSecondaryClipFirstReadFailureKeepsFeaturePlayable(t *testing.T) {
+	const size = 20000
+	sess, _, server, want := brokenStreamFixture(t, []int{size, size}, []int{1}, Config{})
+	const feature = "BDMV/STREAM/00001.m2ts"
+	const secondary = "BDMV/STREAM/00002.m2ts"
+	file := sess.content.direct
+	clip := func(name string, offset int64) *Content {
+		return &Content{Name: name, Size: size, complete: true, parts: []extent{{file: file, offset: offset, length: size}}}
+	}
+	sess.content = clip(feature, 0)
+	sess.content.disc = newDiscFiles()
+	sess.content.disc.add(secondary, clip(secondary, size))
+	for _, tc := range []struct {
+		path, ranges string
+		status       int
+	}{
+		{secondary, "bytes=0-99", http.StatusGone},
+		{secondary, "bytes=0-9,20-29", http.StatusGone},
+		{feature, "bytes=0-99", http.StatusPartialContent},
+	} {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/stream/test/"+tc.path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Range", tc.ranges)
+		resp, err := server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != tc.status {
+			t.Fatalf("%s %s: status=%d read error=%v", tc.path, tc.ranges, resp.StatusCode, err)
+		}
+		if tc.path == secondary {
+			if resp.Header.Get("X-Usenet-Failure") != "missing-article" || resp.Header.Get("Content-Range") != "" {
+				t.Fatalf("secondary clip failure headers: %v", resp.Header)
+			}
+		} else if !bytes.Equal(body, want[:100]) {
+			t.Fatalf("feature returned %d incorrect bytes", len(body))
+		}
+	}
+}
+
 func TestMissingRangeFailsWithoutAdvertisingEmptySuccess(t *testing.T) {
 	sess, provider, srv, _ := brokenStreamFixture(t, []int{716800, 716800, 716800}, []int{1}, Config{})
 	resp, b, err := requestRange(t, srv, "bytes=716800-")
