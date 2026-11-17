@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -22,7 +23,11 @@ func brokenStreamFixture(t *testing.T, sizes []int, missing []int, cfg Config) (
 	for _, n := range sizes {
 		total += n
 	}
-	want := payload(total)
+	return brokenStreamWithPayload(t, payload(total), sizes, missing, cfg)
+}
+
+func brokenStreamWithPayload(t *testing.T, want []byte, sizes, missing []int, cfg Config) (*Session, *nntpserver.Server, *httptest.Server, []byte) {
+	t.Helper()
 	xml, articles := fixture([]inputFile{{"movie.mkv", want, sizes}})
 	misses := make(map[string]struct{})
 	for _, i := range missing {
@@ -44,7 +49,7 @@ func brokenStreamFixture(t *testing.T, sizes []int, missing []int, cfg Config) (
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	sess := &Session{ctx: ctx, cancel: cancel, pool: pool, store: store, content: &Content{Name: "movie.mkv", Size: int64(total), direct: files[0]}, trace: newStartupTrace()}
+	sess := &Session{ctx: ctx, cancel: cancel, pool: pool, store: store, content: &Content{Name: "movie.mkv", Size: int64(len(want)), direct: files[0]}, trace: newStartupTrace()}
 	app := NewServer(ctx, "secret", nil, &http.Client{})
 	app.sessions["test"] = sess
 	srv := httptest.NewServer(app)
@@ -65,6 +70,51 @@ func requestRange(t *testing.T, srv *httptest.Server, value string) (*http.Respo
 	b, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	return resp, b, err
+}
+
+// NZB wire sizes include yEnc escapes. With only the first article's decoded
+// extent known, a byte near a boundary can be estimated into a missing neighbour.
+func TestSeekBesideMissingArticles(t *testing.T) {
+	const size = 2048
+	for _, tc := range []struct {
+		name    string
+		escaped int
+		missing []int
+		start   int
+	}{
+		{"before gap", 4, []int{2}, 2*size - 10},
+		{"after gap", 1, []int{1}, 2*size + 5},
+		{"after consecutive misses", 2, []int{1, 2}, 3*size + 5},
+	} {
+		for _, fill := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fill=%t", tc.name, fill), func(t *testing.T) {
+				sizes := []int{size, size, size, size, size}
+				want := payload(size * len(sizes))
+				// This byte needs escaping on the wire and occupies one decoded byte.
+				copy(want[tc.escaped*size:], bytes.Repeat([]byte{214}, size))
+				cfg := Config{HoleFilling: fill, MaxMissingArticles: 1, MaxConsecutiveMissing: 1}
+				session, _, server, _ := brokenStreamWithPayload(t, want, sizes, tc.missing, cfg)
+				resp, head, err := requestRange(t, server, "bytes=0-15")
+				if err != nil || resp.StatusCode != 206 || !bytes.Equal(head, want[:16]) {
+					t.Fatalf("initial range: status=%d err=%v", resp.StatusCode, err)
+				}
+				f := session.content.direct
+				guess := f.locate(int64(tc.start), 0, len(sizes)-1)
+				if !slices.Contains(tc.missing, guess) {
+					t.Fatalf("fixture estimated article %d, want a miss in %v", guess, tc.missing)
+				}
+				for _, start := range []int{tc.start, 0} {
+					resp, b, err := requestRange(t, server, fmt.Sprintf("bytes=%d-%d", start, start+5))
+					if err != nil || resp.StatusCode != 206 || !bytes.Equal(b, want[start:start+6]) {
+						t.Fatalf("range at %d: status=%d failure=%q bytes=%x err=%v", start, resp.StatusCode, resp.Header.Get("X-Usenet-Failure"), b, err)
+					}
+				}
+				if fill && session.store.holes.count != 0 {
+					t.Fatal("healthy range used the hole-filling budget")
+				}
+			})
+		}
+	}
 }
 
 func TestMissingRangeFailsWithoutAdvertisingEmptySuccess(t *testing.T) {
