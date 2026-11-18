@@ -373,8 +373,8 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				}
 				reader := file.Reader(ctx, ahead)
 				defer reader.Close()
-				w.Header().Set("Content-Type", "application/octet-stream")
-				http.ServeContent(w, r, path.Base(file.Name), time.Time{}, reader)
+				// A secondary clip can fail independently of the selected feature.
+				serveMedia(w, r, path.Base(file.Name), reader, &streamFailure{})
 				return
 			}
 		}
@@ -387,15 +387,19 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	reader := session.content.Reader(ctx, session.ahead)
 	reader.warmup = session.warmup
 	defer reader.Close()
+	serveMedia(w, r, session.content.Name, session.trace.reader(reader), &session.failure)
+}
+
+func serveMedia(w http.ResponseWriter, r *http.Request, name string, reader io.ReadSeeker, failure *streamFailure) {
 	// ServeContent implements suffix, open-ended, multiple and unsatisfiable
 	// ranges, HEAD, exact Content-Length and Content-Range semantics. Every
 	// request has its own cursor; no player can mutate another reader's seek.
 	w.Header().Set("Content-Type", "application/octet-stream")
 	response := &deferredStreamResponse{ResponseWriter: w}
-	tracked := &failureReader{ReadSeeker: session.trace.reader(reader), session: session, response: response}
-	http.ServeContent(response, r, session.content.Name, time.Time{}, tracked)
+	tracked := &failureReader{ReadSeeker: reader, failure: failure, response: response}
+	http.ServeContent(response, r, name, time.Time{}, tracked)
 	if !response.committed && tracked.lastError() != nil {
-		if kind := session.failure.get(); kind != "" {
+		if kind := failure.get(); kind != "" {
 			streamHTTPError(w, kind, http.StatusGone)
 		} else {
 			streamHTTPError(w, "temporary-read-error", http.StatusBadGateway)

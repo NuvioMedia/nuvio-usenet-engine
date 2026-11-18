@@ -49,3 +49,22 @@ func TestReleasedArticlesAreReusedAndYieldToReadAhead(t *testing.T) {
 		t.Fatalf("unexpected repeat transfers: %d BODYs", got)
 	}
 }
+
+func TestFinishedFetchReleasesContextWhileArticleIsCached(t *testing.T) {
+	want := payload(1024)
+	_, store, provider := setup(t, []inputFile{{"movie.mkv", want, nil}}, 0, 1, 1)
+	const id = "f0-s0@test"
+	a := store.acquire(id, false)
+	store.wg.Wait()
+	store.release(a)
+	if a.ctx.Err() != context.Canceled || store.ctx.Err() != nil {
+		t.Fatalf("after fetch: article context=%v store context=%v", a.ctx.Err(), store.ctx.Err())
+	}
+	cached := store.acquire(id, false)
+	defer store.release(cached)
+	b := make([]byte, len(want))
+	n, err := cached.readAt(context.Background(), b, 0)
+	if err != nil || n != len(b) || !bytes.Equal(b, want) || provider.Counters().Bodies != 1 {
+		t.Fatalf("cache read: bytes=%d error=%v BODY calls=%d", n, err, provider.Counters().Bodies)
+	}
+}

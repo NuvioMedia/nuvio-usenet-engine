@@ -292,6 +292,9 @@ func (s *Store) allocate(a *article, size int64) error {
 
 func (s *Store) fetch(a *article, speculative bool) {
 	defer s.wg.Done()
+	// The fetch owns this child context. Detach it after recording the result,
+	// including confirmed misses, even when readers keep the completed slab.
+	defer a.cancel()
 	metaFn := func(m nntppool.YEncMeta) {
 		size := m.PartSize
 		if size == 0 && m.Part == 0 {

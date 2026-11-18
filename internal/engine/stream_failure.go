@@ -54,7 +54,7 @@ func (f *streamFailure) record(err error) {
 
 type failureReader struct {
 	io.ReadSeeker
-	session  *Session
+	failure  *streamFailure
 	mu       sync.Mutex
 	err      error
 	response *deferredStreamResponse
@@ -69,7 +69,7 @@ func (r *failureReader) Read(p []byte) (int, error) {
 		r.mu.Lock()
 		r.err = err
 		r.mu.Unlock()
-		r.session.failure.record(err)
+		r.failure.record(err)
 	}
 	return n, err
 }
@@ -79,7 +79,7 @@ func (r *failureReader) lastError() error { r.mu.Lock(); defer r.mu.Unlock(); re
 // ServeContent writes success headers before its first body read and discards
 // CopyN's error. Delay committing those headers until actual bytes are written:
 // a first-read failure can still be returned as an HTTP error. A later failure
-// necessarily truncates this response, but retires the session for every reopen.
+// necessarily truncates this response.
 type deferredStreamResponse struct {
 	http.ResponseWriter
 	status     int

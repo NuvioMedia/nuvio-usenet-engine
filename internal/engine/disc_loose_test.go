@@ -106,6 +106,63 @@ func TestEpisodesOfLooseBlurayDiscsComeFromTheirPlaylists(t *testing.T) {
 	}
 }
 
+func TestIncompleteLooseDiscEpisodeOrder(t *testing.T) {
+	first, second := play("00002", 50), play("00001", 50)
+	for _, tc := range []struct {
+		name  string
+		extra [][]byte
+		want  string
+	}{
+		{"missing first playlist", nil, ""},
+		{"surviving play all", [][]byte{mplsFile(first, second)}, "Disc 1/BDMV/STREAM/00002.m2ts"},
+		{"conflicting play all", [][]byte{mplsFile(first, second), mplsFile(second, first)}, ""},
+		{"partial coverage", [][]byte{mplsFile(second, second)}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := []inputFile{{name: "00001.mpls", data: []byte("unreadable playlist")}, {name: "00002.mpls", data: mplsFile(second)}}
+			for i, data := range tc.extra {
+				in = append(in, inputFile{name: fmt.Sprintf("%05d.mpls", i+3), data: data})
+			}
+			in = append(in, inputFile{name: "00001.m2ts", data: clipData(1)}, inputFile{name: "00002.m2ts", data: clipData(2)})
+			files, _, _ := setup(t, in, 0, 4, 4)
+			c, err := Select(context.Background(), files, Selection{Season: 1, Episode: 1})
+			if tc.want == "" {
+				if c != nil || err == nil || !strings.Contains(err.Error(), "episode order") {
+					t.Fatalf("ambiguous disc selected %v, error %v", c, err)
+				}
+			} else if err != nil || c.Name != tc.want {
+				t.Fatalf("selected %v, error %v, want %s", c, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLooseDiscUsesMatchingBackupPlaylist(t *testing.T) {
+	first := inputFile{name: "00001.mpls", data: mplsFile(play("00002", 50))}
+	second := inputFile{name: "00002.mpls", data: mplsFile(play("00001", 50))}
+	in := []inputFile{first, second, {name: "index.bdmv", data: []byte("INDX0200")},
+		{name: first.name, data: []byte("unreadable playlist")}, second,
+		{name: "00001.m2ts", data: clipData(1)}, {name: "00002.m2ts", data: clipData(2)}}
+	files, _, _ := setup(t, in, 0, 4, 4)
+	c, err := Select(context.Background(), files, Selection{Season: 1, Episode: 1})
+	if err != nil || c.Name != "Disc 1/BDMV/STREAM/00002.m2ts" {
+		t.Fatalf("backup selection: %v, %v", c, err)
+	}
+}
+
+func TestUncertainDiscCannotShiftNextDiscIntoItsSlot(t *testing.T) {
+	in := []inputFile{
+		{name: "00001.mpls", data: []byte("unreadable playlist")}, {name: "00002.mpls", data: mplsFile(play("00002", 50))},
+		{name: "00001.m2ts", data: clipData(1)}, {name: "00002.m2ts", data: clipData(2)},
+		{name: "00001.mpls", data: mplsFile(play("00001", 50))}, {name: "00001.m2ts", data: clipData(3)},
+	}
+	files, _, _ := setup(t, in, 0, 4, 4)
+	c, err := Select(context.Background(), files, Selection{Season: 1, Episode: 2})
+	if c != nil || !errors.Is(err, errDiscEpisodeOrder) {
+		t.Fatalf("selected %v, error %v", c, err)
+	}
+}
+
 // Discs whose articles were removed fail as such, at the first disc, so the
 // release is remembered as unavailable rather than as missing an episode.
 func TestLooseDiscsWithRemovedPlaylistsFailAsMissingArticles(t *testing.T) {
