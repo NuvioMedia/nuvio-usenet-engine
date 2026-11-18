@@ -5,7 +5,7 @@ package engine
 // discs one after another, each in the order its paths sort. A disc's clips (its
 // STREAM run of .m2ts) come right after its playlists (its PLAYLIST run of
 // .mpls), with its CLPI run (CLIPINF) before those; its backup copies come
-// earlier still and are not read. Nothing names an episode, so an episode is
+// earlier still and can replace an unreadable primary playlist. Nothing names an episode, so an episode is
 // found the way a player would: from the discs' playlists.
 
 import (
@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 
 var looseDiscFileRE = regexp.MustCompile(`(?i)^(\d{5})\.(m2ts|mpls|clpi)$`)
 
+var errDiscEpisodeOrder = errors.New("cannot establish the Blu-ray episode order")
 var errDiscEpisodeMissing = errors.New("the Blu-ray discs hold no such episode")
 
 // A playlist shorter than this is a menu, a trailer or an extra, never an episode.
@@ -30,6 +32,7 @@ const minEpisodeSeconds = 10 * 60
 type looseDisc struct {
 	number    int
 	playlists []*File          // its PLAYLIST run, in posting order
+	backups   map[*File]*File  // matching files of a same-disc backup PLAYLIST run
 	clips     map[string]*File // by clip number
 	clipInfo  map[string]*File
 }
@@ -81,10 +84,23 @@ func looseDiscs(files []*File) []*looseDisc {
 			d.clips[clip] = f
 		}
 		// The nearest PLAYLIST and CLIPINF runs before it, after the previous disc's clips.
+		pastDiscIndex := false
 		for j := i - 1; j >= 0 && runs[j].ext != "m2ts"; j-- {
 			switch {
 			case runs[j].ext == "mpls" && d.playlists == nil:
 				d.playlists = runs[j].files
+			case d.playlists != nil && strings.EqualFold(runs[j].files[0].Name, "index.bdmv"):
+				pastDiscIndex = true
+			case pastDiscIndex && runs[j].ext == "mpls" && d.backups == nil:
+				// Both PLAYLIST directories sort by the same five-digit names.
+				// Only pair a complete matching run within this disc.
+				backup := runs[j].files
+				if slices.EqualFunc(d.playlists, backup, func(a, b *File) bool { return strings.EqualFold(a.Name, b.Name) }) {
+					d.backups = make(map[*File]*File, len(backup))
+					for k, f := range d.playlists {
+						d.backups[f] = backup[k]
+					}
+				}
 			case runs[j].ext == "clpi" && len(d.clipInfo) == 0:
 				for _, f := range runs[j].files {
 					d.clipInfo[f.Name[:5]] = f
@@ -229,6 +245,50 @@ func discEpisodes(d *looseDisc, playlists map[*File][]mplsItem) []discEpisode {
 	return episodes
 }
 
+// With an unreadable playlist, filename order and a list of the surviving
+// episode clips cannot establish season ordinals. Accept a play-all order
+// only if it covers the clip inventory, other sequences agree, and individual
+// episode playlists corroborate all but at most one of its play items.
+func recoverDiscOrder(d *looseDisc, playlists map[*File][]mplsItem) ([]discEpisode, bool) {
+	var order []mplsItem
+	singles := make(map[mplsItem]bool)
+	for _, f := range d.playlists {
+		items := playlists[f]
+		switch len(items) {
+		case 0:
+		case 1:
+			singles[items[0]] = true
+		default:
+			if len(items) != len(d.clips) || (order != nil && !slices.Equal(items, order)) {
+				return nil, false
+			}
+			order = items
+		}
+	}
+	if len(d.clips) == 1 && len(singles) == 1 && order == nil {
+		for item := range singles {
+			order = []mplsItem{item}
+		}
+	}
+	if len(order) == 0 || len(singles) == 0 {
+		return nil, false
+	}
+	var episodes []discEpisode
+	seen := make(map[string]bool)
+	matched := 0
+	for _, item := range order {
+		if d.clips[item.clip] == nil || seen[item.clip] || item.seconds() < minEpisodeSeconds {
+			return nil, false
+		}
+		seen[item.clip] = true
+		if singles[item] {
+			matched++
+		}
+		episodes = append(episodes, discEpisode{d, item.clip, item.seconds()})
+	}
+	return episodes, matched == len(singles) && matched >= len(order)-1
+}
+
 // looseDiscEpisode serves the requested episode of a season of loose discs: the
 // discs' episodes in disc order, the n-th of them. Episodes much shorter than
 // the others are extras. The discs are taken to hold one season.
@@ -239,7 +299,19 @@ func looseDiscEpisode(ctx context.Context, discs []*looseDisc, s Selection) (*Co
 	}
 	var episodes []discEpisode
 	for _, d := range discs {
-		episodes = append(episodes, discEpisodes(d, playlists)...)
+		incomplete := slices.ContainsFunc(d.playlists, func(f *File) bool {
+			_, read := playlists[f]
+			return !read
+		})
+		if incomplete {
+			recovered, ok := recoverDiscOrder(d, playlists)
+			if !ok {
+				return nil, fmt.Errorf("%w for episode %d: unreadable playlist on disc %d", errDiscEpisodeOrder, s.Episode, d.number)
+			}
+			episodes = append(episodes, recovered...)
+		} else {
+			episodes = append(episodes, discEpisodes(d, playlists)...)
+		}
 	}
 	if len(episodes) > 0 {
 		lengths := make([]float64, len(episodes))
@@ -293,6 +365,11 @@ func readLoosePlaylists(ctx context.Context, discs []*looseDisc) (map[*File][]mp
 				defer wg.Done()
 				for f := range work {
 					items, err := readPlaylist(ctx, f)
+					if backup := d.backups[f]; err != nil && backup != nil && ctx.Err() == nil {
+						if replacement, backupErr := readPlaylist(ctx, backup); backupErr == nil {
+							items, err = replacement, nil
+						}
+					}
 					mu.Lock()
 					if err != nil {
 						if first == nil {
