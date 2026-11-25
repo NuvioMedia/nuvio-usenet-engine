@@ -65,6 +65,12 @@ python3 scripts/build_android.py \
 python3 scripts/check_prebuilts.py
 ```
 
+The script builds from a temporary copy of the Go toolchain whose 32-bit
+Android runtime always uses the 32-bit time syscalls: Android 8.0-10 kills
+apps that call `futex_time64` even on kernels 5.1 and newer
+([golang/go#83366](https://github.com/golang/go/issues/83366)). The installed
+toolchain is not modified and the 64-bit binaries are unchanged.
+
 Commit and push the source and regenerated manifest. The **Publish Usenet native
 assets** workflow on `main` rebuilds with the pinned toolchain, requires matching
 checksums, and publishes immutable source-hash release assets. It can also be
