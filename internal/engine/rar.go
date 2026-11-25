@@ -38,6 +38,7 @@ type rarBlock struct {
 	headerCrypt                         *rarCrypt // Following headers are encrypted (-hp).
 	headerPrefix                        int64     // On-disk IV/salt before an encrypted header.
 	header                              int64     // Plain header length: data starts this far after it.
+	quickOpen                           int64     // Main header: its Quick Open block, this far after it.
 }
 
 type rarMainLayout struct {
@@ -120,7 +121,18 @@ func (v *rarVolume) block(ctx context.Context, pos int64) (rarBlock, error) {
 	if v.version == 4 {
 		return rar4Block(r, v.file.Size(), pos)
 	}
-	return rar5Block(r, v.file.Size(), pos)
+	q := &v.file.quickOpen
+	if h := q.cached(ctx, v.file, pos); h != nil {
+		if b, err := rar5Block(rarHeaderCopy{pos, h}, v.file.Size(), pos); err == nil && b.file {
+			q.use(pos, b.data)
+			return b, nil
+		}
+	}
+	b, err := rar5Block(r, v.file.Size(), pos)
+	if err == nil {
+		q.saw(r, pos, b, v.file.Size())
+	}
+	return b, err
 }
 
 // encryptedBlock parses a -hp header in plaintext coordinates, then moves its
@@ -346,6 +358,9 @@ func rar5Block(r io.ReaderAt, volumeSize, pos int64) (rarBlock, error) {
 		// A locked archive (0x10) keeps the layout of an unlocked one.
 		b.template = flags&^uint64(5) == 0 && af&^0x10 == 3 &&
 			extra == uint64(len(x.b)-x.pos) && rarStableMainExtra(x.b[x.pos:])
+		if extra > 0 && extra <= uint64(len(x.b)-x.pos) {
+			b.quickOpen = rarQuickOpenOffset(x.b[len(x.b)-int(extra):])
+		}
 	}
 	if kind == 2 {
 		b.file = true

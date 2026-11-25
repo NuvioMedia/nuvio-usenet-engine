@@ -42,6 +42,7 @@ type File struct {
 	expected      *subjectOrderedVolume
 	segments      []segment
 	prefix        []int64
+	quickOpen     rarQuickOpen // A RAR5 volume's header copies.
 	size          int64
 	exact         bool
 	known         []int // sorted authoritative anchors; Range lookup is O(log segments).
