@@ -355,8 +355,9 @@ func rar5Block(r io.ReaderAt, volumeSize, pos int64) (rarBlock, error) {
 		b.firstVolume = b.volume == 0
 		b.multiVolume = af&1 != 0
 		b.mainLayout = rarMainLayout{int64(size), nvar, x.pos - start}
-		// A locked archive (0x10) keeps the layout of an unlocked one.
-		b.template = flags&^uint64(5) == 0 && af&^0x10 == 3 &&
+		// A locked archive (0x10), or one with a recovery record (0x08), keeps
+		// the layout of a plain one: the record follows the volume's data.
+		b.template = flags&^uint64(5) == 0 && af&^0x18 == 3 &&
 			extra == uint64(len(x.b)-x.pos) && rarStableMainExtra(x.b[x.pos:])
 		if extra > 0 && extra <= uint64(len(x.b)-x.pos) {
 			b.quickOpen = rarQuickOpenOffset(x.b[len(x.b)-int(extra):])
@@ -897,17 +898,31 @@ func rarVintLen(n int64) int {
 }
 
 // Quick Open locator offsets are commonly reserved with padded integers. Their
-// values change, but the reserved space can be reused by the template. Other
-// main-header metadata and recovery records do not qualify for this fast path.
+// values change, but the reserved space can be reused by the template. So can
+// a recovery record offset, but only when it is visibly reserved: wider than
+// its value needs, as rar writes it. Other main-header metadata does not
+// qualify for this fast path.
 func rarStableMainExtra(extra []byte) bool {
 	x := vintReader{b: extra}
 	for x.pos < len(x.b) && x.err == nil {
 		n := x.num()
 		start := x.pos
-		if n == 0 || n > uint64(len(x.b)-start) || x.num() != 1 || x.num() != 1 {
+		if n == 0 || n > uint64(len(x.b)-start) || x.num() != 1 {
 			return false
 		}
-		x.num() // Quick Open offset; its value does not locate the file payload.
+		locator := x.num()
+		if locator == 0 || locator&^3 != 0 {
+			return false
+		}
+		if locator&1 != 0 {
+			x.num() // Quick Open offset; its value does not locate the file payload.
+		}
+		if locator&2 != 0 {
+			at := x.pos
+			if rr := x.num(); x.err == nil && x.pos-at <= rarVintLen(int64(rr)) {
+				return false // Its width could change from one volume to the next.
+			}
+		}
 		if x.pos != start+int(n) {
 			return false
 		}
