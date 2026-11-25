@@ -209,6 +209,36 @@ func Select(ctx context.Context, files []*File, s Selection) (*Content, error) {
 }
 
 func selectPass(ctx context.Context, files []*File, s Selection) (*Content, error) {
+	c, err := selectHeaders(ctx, files, s)
+	if errors.Is(err, errRARQuickOpenStale) {
+		// A volume's Quick Open copy did not match the header it stood in
+		// for: select again from the headers themselves.
+		for _, f := range files {
+			f.quickOpen.disable()
+		}
+		c, err = selectHeaders(ctx, files, s)
+	}
+	return c, err
+}
+
+// selectHeaders is a selection whose RAR headers may come from Quick Open
+// copies; the entries it returns were checked against their real headers.
+func selectHeaders(ctx context.Context, files []*File, s Selection) (*Content, error) {
+	c, err := selectEntries(ctx, files, s)
+	for _, f := range files {
+		if f.quickOpen.misled() {
+			return nil, errRARQuickOpenStale
+		}
+	}
+	if err == nil && c != nil {
+		if err = verifyQuickOpenCopies(ctx, c); err != nil {
+			return nil, err
+		}
+	}
+	return c, err
+}
+
+func selectEntries(ctx context.Context, files []*File, s Selection) (*Content, error) {
 	c, err := selectContent(ctx, files, s, false)
 	if err == errNoMatchingVideo && s.episodeOnly() {
 		s.multiEpisode = true
