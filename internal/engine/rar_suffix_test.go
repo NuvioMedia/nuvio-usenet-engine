@@ -12,8 +12,10 @@ import (
 	"time"
 )
 
-// withRecoveryRecord announces a recovery record in a volume's main header, as
-// releases made with one do. The continuation template then no longer applies.
+// withRecoveryRecord announces a recovery record in a volume's main header. In
+// RAR4 the continuation template then no longer applies; in RAR5 the locator's
+// offsets take only the bytes their values need, so their width may change
+// between volumes and the template does not apply either.
 func withRecoveryRecord(version int, v []byte, index int) []byte {
 	if version == 4 {
 		out := append([]byte(nil), v...)
