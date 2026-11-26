@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"testing"
 )
 
@@ -189,6 +191,112 @@ func TestRARRecoveryRecordPredictionIsChecked(t *testing.T) {
 	}
 	if c.predicted != nil {
 		t.Fatal("irregular layout retained prediction")
+	}
+}
+
+// The recovery record flag keeps a main header a template, locked or not; a
+// solid archive is still not one.
+func TestRAR5RecoveryRecordMainHeaderIsATemplate(t *testing.T) {
+	for _, tc := range []struct {
+		flags    uint64
+		template bool
+	}{{0x0b, true}, {0x1b, true}, {0x0f, false}, {0x2b, false}} {
+		h := rar5TestHeader(binary.AppendUvarint(binary.AppendUvarint([]byte{1, 0}, tc.flags), 5))
+		b, err := rar5Block(bytes.NewReader(h), int64(len(h)), 0)
+		if err != nil || !b.main || !b.multiVolume || b.volume != 5 || b.template != tc.template {
+			t.Fatalf("archive flags %#x: main=%t volume=%t template=%t, want template=%t (%v)", tc.flags, b.main, b.multiVolume, b.template, tc.template, err)
+		}
+	}
+}
+
+func withReservedRecoveryRecords(in []inputFile) []inputFile {
+	out := make([]inputFile, len(in))
+	for i, f := range in {
+		f.data = withReservedRecoveryRecord(f.data, i, 3)
+		out[i] = f
+	}
+	return out
+}
+
+// A scene release wrapped in an obfuscated set, either set made with a
+// recovery record: the outer set is listed by its arithmetic, and every read
+// still returns the movie's bytes.
+func TestRARInRARRecoveryRecord(t *testing.T) {
+	for _, where := range []string{"outer", "inner", "both"} {
+		t.Run(where, func(t *testing.T) {
+			movie := payload(400000)[3:]
+			inner, _ := packedRARSet(t, 5, func(int) int { return 30000 }, rar4Entry{"Movie.2026.1080p-GRP.mkv", movie, len(movie), 0})
+			if where != "outer" {
+				inner = withReservedRecoveryRecords(inner)
+			}
+			in := wrapRARSet(t, 5, inner, func(int) int { return 7000 }, releaseFiles()...)
+			if where != "inner" {
+				in = withReservedRecoveryRecords(in)
+			}
+			files, _, server := setup(t, in, 0, 8, 4)
+			c, err := Select(context.Background(), files, Selection{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Name != "Movie.2026.1080p-GRP.mkv" || c.Size != int64(len(movie)) || c.nested == nil {
+				t.Fatalf("selected %q (%d bytes, nested=%t)", c.Name, c.Size, c.nested != nil)
+			}
+			if bodies := server.Counters().Bodies; bodies >= int64(len(in)) {
+				t.Fatalf("selection fetched %d articles from %d volumes", bodies, len(in))
+			}
+			listed := 0
+			for _, v := range c.nested.vols {
+				if v.predicted != nil {
+					listed++
+				}
+			}
+			if listed == 0 {
+				t.Fatal("no inner volume was mapped by the listing's arithmetic")
+			}
+			rng := rand.New(rand.NewSource(11))
+			r := c.Reader(context.Background(), 1)
+			defer r.Close()
+			for i := 0; i < 200; i++ {
+				off := rng.Int63n(c.Size)
+				buf := make([]byte, 1+rng.Intn(20000))
+				if _, err := r.Seek(off, io.SeekStart); err != nil {
+					t.Fatal(err)
+				}
+				n, err := io.ReadFull(r, buf)
+				if err != nil && !(errors.Is(err, io.ErrUnexpectedEOF) && off+int64(n) == c.Size) {
+					t.Fatalf("read at %d: %v", off, err)
+				}
+				if !bytes.Equal(buf[:n], movie[off:off+int64(n)]) {
+					t.Fatalf("read at %d (+%d) differs", off, n)
+				}
+			}
+			if got := readAllContent(t, c); !bytes.Equal(got, movie) {
+				t.Fatal("sequential read differs")
+			}
+		})
+	}
+}
+
+// A disc image in a wrapped set made with a recovery record keeps its clip
+// and the clip's disc files.
+func TestRARInRARDiscImageRecoveryRecord(t *testing.T) {
+	feature, extra := payload(70000)[1000:], payload(9000)[77:]
+	image := buildUDF(blurayTree(feature, extra), false, false, false)
+	inner, _ := packedRARSet(t, 5, func(int) int { return 64 << 10 }, rar4Entry{"MOVIE.iso", image, len(image), 0})
+	in := withReservedRecoveryRecords(wrapRARSet(t, 5, withReservedRecoveryRecords(inner), func(int) int { return 12 << 10 }, releaseFiles()...))
+	files, _, _ := setup(t, in, 0, 8, 4)
+	c, err := Select(context.Background(), files, Selection{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Name != "MOVIE.iso/BDMV/STREAM/00800.m2ts" || c.Size != int64(len(feature)) {
+		t.Fatalf("selected %q (%d bytes)", c.Name, c.Size)
+	}
+	if got := readAllContent(t, c); !bytes.Equal(got, feature) {
+		t.Fatal("feature bytes differ")
+	}
+	if c.disc == nil || c.clipInfo == nil {
+		t.Fatal("the image's clip lost its disc files")
 	}
 }
 
